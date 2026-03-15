@@ -11,24 +11,36 @@
 }
 
 .body {
-  display: grid;
+  display: block;
   grid-template-columns: 340px 1fr;
   flex: 1;
   min-height: 0;
+  padding: 16px;
 }
 
-/*Topbar*/
+/* Media query para tablets y desktop */
+@media (min-width: 768px) {
+  .body {
+    padding: 20px 26px;
+  }
+}
+
+/* ── Topbar responsive ── */
 .topbar {
   background: var(--ink);
-  padding: 14px 28px;
+  padding: 14px 16px;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   border-bottom: 2px solid var(--amber);
   flex-wrap: wrap;
-  position: relative;
-  top: 0;
-  z-index: 100;
+}
+
+@media (max-width: 767px) {
+  .topbar {
+    padding: 10px 12px;
+    gap: 8px;
+  }
 }
 
 .logoBadge {
@@ -401,8 +413,14 @@
 /*Stats row*/
 .statsRow {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 10px;
+}
+
+@media (max-width: 480px) {
+  .statsRow {
+    grid-template-columns: 1fr;  /* Una columna en móvil muy pequeño */
+  }
 }
 
 .statBox {
@@ -447,6 +465,19 @@
 .table {
   width: 100%;
   border-collapse: collapse;
+  min-width: 600px;
+}
+
+/* En móvil, la tabla tendrá scroll */
+@media (max-width: 767px) {
+  .tableWrap {
+    border: 1px solid var(--line);
+    border-radius: var(--r-sm);
+  }
+  
+  .table th:nth-child(1) { width: 60px; }
+  .table th:nth-child(2) { width: 150px; }
+  .table th:nth-child(3) { width: 200px; }
 }
 
 .table thead th {

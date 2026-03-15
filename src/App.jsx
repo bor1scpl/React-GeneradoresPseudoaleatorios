@@ -984,7 +984,7 @@ return (
         {/*FILA 1 TRES TARJETAS EN HORIZONTAL*/}
         <div style={{ 
           display: 'grid', 
-          gridTemplateColumns: '1fr 1fr 1fr', 
+          gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', 
           gap: '16px',
           marginBottom: '20px'
         }}>
@@ -1127,22 +1127,24 @@ return (
           </div>
         </div>     
 
-        {/*FILA 2: BOTONES DE ACCIÓN*/}
+        {/*FILA 2: BOTONES DE ACCIÓN RESPONSIVE*/}
         <div style={{ 
           display: 'flex', 
+          flexDirection: 'row',
+          flexWrap: 'wrap',
           gap: '8px', 
           marginBottom: '20px'
         }}>
           <button
             className={`${styles.btn} ${styles.btnAmber}`}
-            style={{ flex: 2 }}
+            style={{ flex: '2 1 200px' }}  /* Mínimo 200px, luego crece */
             onClick={handleGenerar}
           >
             ▶ Generar números
           </button>
           <button
             className={`${styles.btn} ${styles.btnTeal}`}
-            style={{ flex: 1 }}
+            style={{ flex: '1 1 150px' }}
             onClick={handleExportar}
             disabled={!resultado}
           >
@@ -1150,6 +1152,7 @@ return (
           </button>
           <button
             className={`${styles.btn} ${styles.btnRose}`}
+            style={{ flex: '0 1 auto' }}
             onClick={handleLimpiar}
             title="Limpiar resultados"
           >
