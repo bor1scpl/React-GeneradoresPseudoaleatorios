@@ -44,7 +44,6 @@ export function chiCuadradoCritico(gl, alpha = 0.05) {
     60:79.082, 70:90.531, 80:101.879, 90:113.145, 100:124.342,
   };
   if (tabla[gl] !== undefined) return tabla[gl];
-  const p = 1 - alpha;
   const z = 1.6449; // z_0.95 para α=0.05
   const h = 2 / (9 * gl);
   return gl * Math.pow(1 - h + z * Math.sqrt(h), 3);
@@ -230,8 +229,7 @@ export function pruebaKS(ui, alpha = 0.05) {
   //Calcular Dn = max |Fn(U_(i)) - U_(i)|
   let Dn = 0;
   const diferencias = ordenados.map((u, idx) => {
-    const Fn = idx / N;
-    const F0 = u; 
+    const Fn = idx / N; 
     const diff = Math.abs(Fn - u);
     if (diff > Dn) Dn = diff;
     return { 

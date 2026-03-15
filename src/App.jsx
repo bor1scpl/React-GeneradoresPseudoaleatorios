@@ -5,7 +5,7 @@ import * as XLSX from 'xlsx';
 import { useState, useCallback, useMemo } from 'react';
 import { METODOS, generarSecuencia, validarParametros, esPotencia2, generarSemillasMitchell} from './generadores';
 import styles from './App.module.css';
-import { aplicarPruebas, parsearArchivo } from './pruebas';
+import { aplicarPruebas, } from './pruebas';
 
 // ─────────────────────────────────────────────────────────────
 //  UTILIDADES
@@ -415,7 +415,7 @@ function ModuloPruebas({ resultadoGenerador }) {
   const [seleccionadas, setSelec]       = useState(['promedios','frecuencias','ks','corridas','poker']);
   const [resultadosPruebas, setResultadosPruebas]  = useState(null);
   const [msgPrueba, setMsgPrueba]       = useState(null);
-  const [xlsxTexto, setXlsxTexto]         = useState('');
+  const [, setXlsxTexto]         = useState('');
   const [uiImportados, setUiImp]        = useState([]);
   const [nSubInt, setNSubInt]           = useState('');
 
@@ -744,6 +744,7 @@ export default function App() {
     if (modoAuto) setTimeout(() => cargarAuto(semilla), 0);
   }, [modoAuto, cargarAuto, resetParams, semilla]);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useMemo(() => { cargarAuto(semilla); }, []);
   const toggleAuto = useCallback(() => {
     const nuevo = !modoAuto;
