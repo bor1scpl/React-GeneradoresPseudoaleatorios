@@ -560,7 +560,7 @@ const handleArchivoXLSX = (e) => {
       </div>
 
       {/*Controles en 3 columnas*/}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginTop: 16 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16, marginTop: 16 }}>
 
         {/*Columna 1: Fuente de datos*/}
         <div className={styles.card}>
@@ -672,10 +672,10 @@ const handleArchivoXLSX = (e) => {
       </div>
 
       {/*Botones de acción*/}
-      <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+      <div style={{ display: 'flex', gap: 10, marginTop: 14, marginBottom: 20, flexDirection: 'row', flexWrap: 'wrap'}}>
         <button
           className={`${styles.btn} ${styles.btnAmber}`}
-          style={{ flex: 2 }}
+          style={{ flex: '2 1 200px' }}
           onClick={handleEjecutar}
         >
           ▶ Ejecutar pruebas seleccionadas
