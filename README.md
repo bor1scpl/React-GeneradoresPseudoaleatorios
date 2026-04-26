@@ -1,6 +1,8 @@
 # Generador de Números pseudoaleatorios
 
 App en React para la generación y visualización de números pseudoaleatorios incluyendo aplicación de las pruebas estadisticas.
+Tambien se incluye la generación de variables aleatorias a partir los métodos de generación de números aleatorios que permite el
+aplicativo.
 
 ## Métodos implementados
 
@@ -21,6 +23,7 @@ npm run dev
 
 ## Desplegado en Vercel
 
+Versión 2 con la generación de variables aleatorias.
 
 ## Estructura del proyecto
 
@@ -34,4 +37,17 @@ src/
 ```
 
 ## Pruebas estadísticas implementadas
+x̄
+Prueba de promedios
 
+χ²
+Prueba de frecuencias
+
+D
+Kolmogorov-Smirnov
+
+↕
+Prueba de corridas
+
+♠
+Prueba del póker

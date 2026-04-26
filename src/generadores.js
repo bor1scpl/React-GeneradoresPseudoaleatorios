@@ -510,7 +510,8 @@ export function validarParametros(metodo, semilla, params) {
       if (semilla <= 0) errores.push('La semilla debe ser un entero positivo.');
       const semillaStr = String(semilla);
       const digitosSemilla = semillaStr.length;
-      if (digitosSemilla !== d) errores.push(`Los dígitos de trabajo (d=${d}) deben ser iguales a la cantidad de dígitos de la semilla (${digitosSemilla}).`);
+      if (digitosSemilla !== d) errores.push(`Los dígitos de trabajo (d=${d}) 
+      deben ser iguales a la cantidad de dígitos de la semilla (${digitosSemilla}).`);
       if (semilla % 100 === 0) advertencias.push('Semilla termina en 00 - propensa a degeneración rápida.');
       advertencias.push(`ℹ Normalización: U_n = X_n / ${Math.pow(10, d)}`);
       break;

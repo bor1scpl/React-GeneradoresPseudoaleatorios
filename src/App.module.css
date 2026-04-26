@@ -735,3 +735,31 @@
   color: #fb7185;
   border: 1px solid rgba(244, 63, 94, 0.3);
 }
+
+/* ═══════════════════════════════════════════════
+   MÓDULO DE VARIABLES ALEATORIAS NO-UNIFORMES
+═══════════════════════════════════════════════ */
+.variablesModule {
+  background: var(--slate-800);
+  border: 1px solid var(--slate-700);
+  border-radius: 12px;
+  padding: 20px 22px;
+  margin-top: 20px;
+}
+
+.tableScroll {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.infoBox {
+  background: var(--teal-bg, #f0fdfa);
+  border: 1px solid var(--teal-border, rgba(61,122,120,0.25));
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  color: var(--ink, #1e293b);
+  line-height: 1.5;
+}
+.tdC { font-weight: 600; color: var(--amber, #d97706); }
+

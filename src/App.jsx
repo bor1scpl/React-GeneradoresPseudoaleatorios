@@ -1,14 +1,15 @@
 // ─────────────────────────────────────────────────────────────
-//  IMPORTS
+//  Imports
 // ─────────────────────────────────────────────────────────────
 import * as XLSX from 'xlsx';
 import { useState, useCallback, useMemo } from 'react';
 import { METODOS, generarSecuencia, validarParametros, esPotencia2, generarSemillasMitchell} from './generadores';
 import styles from './App.module.css';
 import { aplicarPruebas, } from './pruebas';
+import { DISTRIBUCIONES, generarVariables, estadisticasDescriptivas } from './variables';
 
 // ─────────────────────────────────────────────────────────────
-//  UTILIDADES
+//  Utilidades varias para formateo de números grandes, etc.
 // ─────────────────────────────────────────────────────────────
 const formatearNumero = (num) => {
   if (!num) return '0';
@@ -18,7 +19,7 @@ const formatearNumero = (num) => {
 };
 
 // ─────────────────────────────────────────────────────────────
-//  COMPONENTES PEQUEÑOS
+//  Componentes pequeños para badges de estado, cajas de fórmula, toggles, etc.
 // ─────────────────────────────────────────────────────────────
 function PeriodoBadge({ completo, cortado, periodo, maxPeriodo }) {
   if (cortado) return (
@@ -66,7 +67,7 @@ function StatBox({ label, value, color }) {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  HOOK: useParamsForm
+//  Hook personalizado para manejar el estado de los parámetros del formulario, con función para cargar valores automáticos según el método seleccionado
 // ─────────────────────────────────────────────────────────────
 function useParamsForm(metodoId) {
   const [valores, setValores] = useState({});
@@ -90,7 +91,7 @@ function useParamsForm(metodoId) {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  COMPONENTE FormularioParametros
+//  Componente FormularioParametros que renderiza dinámicamente los campos de entrada según el método seleccionado, con soporte para campos especiales como semillas Mitchell-Moore y semillas Green, y un botón para generar nuevas semillas automáticamente en el caso de Mitchell-Moore.
 // ─────────────────────────────────────────────────────────────
 function FormularioParametros({ metodoId, valores, onChange, modoAuto, onNuevasSemillasMitchell }) {
   const def = METODOS[metodoId];
@@ -166,7 +167,7 @@ function FormularioParametros({ metodoId, valores, onChange, modoAuto, onNuevasS
 }
 
 // ─────────────────────────────────────────────────────────────
-//  COMPONENTE TablaResultados
+//  Componente TablaResultados
 // ─────────────────────────────────────────────────────────────
 const MAX_FILAS = 500;
 
@@ -210,8 +211,970 @@ function TablaResultados({ enteros, normalizados,indiceInicio = 0 }) {
   );
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  Componente ModuloVariables
+//  Convierte U_i en variables aleatorias no-uniformes (Coss Bu Cap. 4) y muestra estadísticas descriptivas básicas, con opción de exportar a XLSX para análisis externo
+// ═══════════════════════════════════════════════════════════════
+function ModuloVariables({ resultadoGenerador, onVariablesGeneradas }) {
+  const [distId,    setDistId]    = useState('exponencial');
+  const [params,    setParams]    = useState({});
+  const [fuente,    setFuente]    = useState('generador');
+  const [uiImp,     setUiImp]     = useState([]);
+  const [resultado, setResultado] = useState(null);
+  const [msg,       setMsg]       = useState(null);
+  const [verTabla,  setVerTabla]  = useState(false);
+
+const uiActivos = useMemo(() => {
+  return fuente === 'generador'
+    ? (resultadoGenerador?.normalizados || [])
+    : uiImp;
+}, [fuente, resultadoGenerador?.normalizados, uiImp]);
+
+  const distDef = DISTRIBUCIONES.find(d => d.id === distId);
+  const setParam = (key, val) => setParams(prev => ({ ...prev, [key]: val }));
+
+  const handleArchivo = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const workbook = XLSX.read(new Uint8Array(ev.target.result), { type: 'array' });
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+        const jsonData = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' });
+        const ui = [];
+        const header = jsonData[0] || [];
+        let colIdx = header.findIndex(h => String(h).toLowerCase().includes('normal'));
+        if (colIdx < 0) colIdx = header.length - 1;
+        const inicio = jsonData.length > 0 && isNaN(parseFloat(jsonData[0][colIdx])) ? 1 : 0;
+        for (let i = inicio; i < jsonData.length; i++) {
+          const row = jsonData[i];
+          const v = parseFloat(row[colIdx]);
+          if (!isNaN(v) && v >= 0 && v <= 1) ui.push(v);
+        }
+        setUiImp(ui);
+        setMsg(ui.length > 0
+          ? { tipo: 'ok', texto: `✓ ${ui.length} valores U_i cargados desde XLSX.` }
+          : { tipo: 'error', texto: '✗ No se encontraron valores U_i válidos en el archivo.' });
+      } catch {
+        setMsg({ tipo: 'error', texto: '✗ Error al leer el archivo XLSX.' });
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const handleGenerar = useCallback(() => {
+    if (uiActivos.length === 0) {
+      setMsg({ tipo: 'error', texto: fuente === 'generador'
+        ? '✗ Genera números primero con el panel de arriba.'
+        : '✗ Carga un archivo XLSX.' });
+      return;
+    }
+    const parsedParams = {};
+    for (const [k, v] of Object.entries(params)) {
+      parsedParams[k] = Number(v);
+    }
+    const res = generarVariables(distId, uiActivos, parsedParams);
+    if (res.errores.length > 0) {
+      setMsg({ tipo: 'error', texto: res.errores.join('\n') });
+      return;
+    }
+    const stats = estadisticasDescriptivas(res.valores);
+    setResultado({ ...res, stats, distId, params: { ...parsedParams } });
+    setMsg(null);
+    setVerTabla(false);
+    onVariablesGeneradas?.({ ...res, stats, distId, params: { ...parsedParams } });
+  }, [distId, uiActivos, params, fuente, onVariablesGeneradas]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleExportar = useCallback(() => {
+    if (!resultado) return;
+    const dist = DISTRIBUCIONES.find(d => d.id === resultado.distId);
+    
+    //Encabezado: índice, U_i usado, valor generado
+    const datos = [
+      ['i', 'U_i (uniforme)', `X_i (${dist?.nombre || resultado.distId})`]
+    ];
+    
+    resultado.valores.forEach((v, i) => {
+      const ui = uiActivos[i] !== undefined ? parseFloat(uiActivos[i].toFixed(6)) : '';
+      datos.push([i + 1, ui, parseFloat(v.toFixed(6))]);
+    });
+    
+    //Crear y guardar archivo XLSX
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(datos);
+    XLSX.utils.book_append_sheet(wb, ws, `Variables_${resultado.distId}`);
+    XLSX.writeFile(wb, `variables_${resultado.distId}.xlsx`);
+  }, [resultado, uiActivos]);
+
+  const MAX_TABLA = 200;
+
+  return (
+    <div className={styles.variablesModule}>
+      {/*Encabezado*/}
+      <div className={styles.pruebasHeader}>
+        <div className={`${styles.cardIcon} ${styles.iconAmber}`}>f(x)</div>
+        <div style={{ flex: 1 }}>
+          <div className={styles.cardTitle}>Variables Aleatorias No-Uniformes</div>
+          <div className={styles.pruebasSub}>
+            Coss Bu Cap. 4 · Transformada Inversa, Composición, Box-Muller, Procedimientos Especiales
+          </div>
+        </div>
+        {resultado && (
+          <span className={`${styles.badge} ${styles.badgeOk}`}>
+            ✓ {resultado.valores.length.toLocaleString()} valores generados
+          </span>
+        )}
+      </div>
+
+      {/*Controles en 3 columnas*/}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginTop: 16 }}>
+
+        {/*Col 1 — Fuente + Distribución*/}
+        <div className={styles.card}>
+          <div className={styles.cardHead}>
+            <div className={`${styles.cardIcon} ${styles.iconAmber}`}>⊞</div>
+            <span className={styles.cardTitle}>Fuente de U_i y distribución</span>
+          </div>
+          <div className={styles.cardBody}>
+            <div className={styles.field}>
+              <label className={styles.fieldLabel}>Origen de los U_i</label>
+              <select className={styles.select} value={fuente}
+                onChange={e => { setFuente(e.target.value); setResultado(null); setMsg(null); }}>
+                <option value="generador">Usar números generados arriba</option>
+                <option value="xlsx">Importar desde archivo XLSX</option>
+              </select>
+            </div>
+            {fuente === 'generador' && (
+              <div className={`${styles.msg} ${uiActivos.length > 0 ? styles.ok : styles.warn}`}
+                style={{ fontSize: 12 }}>
+                {uiActivos.length > 0
+                  ? `✓ ${uiActivos.length} valores U_i disponibles.`
+                  : '⚠ Genera números primero con el panel de arriba.'}
+              </div>
+            )}
+            {fuente === 'xlsx' && (
+              <div className={styles.field}>
+                <label className={styles.fieldLabel}>
+                  Archivo XLSX
+                  <span className={styles.fieldHint}>mismo formato que puedes exportar en la generación de números (columna Normalizado)</span>
+                </label>
+                <input type="file" accept=".xlsx,.xls" className={styles.input}
+                  style={{ padding: 4, fontSize: 12 }} onChange={handleArchivo} />
+                {uiImp.length > 0 && (
+                  <div className={`${styles.msg} ${styles.ok}`} style={{ marginTop: 6, fontSize: 12 }}>
+                    ✓ {uiImp.length} valores cargados.
+                  </div>
+                )}
+              </div>
+            )}
+            <div className={styles.field} style={{ marginTop: 8 }}>
+              <label className={styles.fieldLabel}>Distribución de probabilidad</label>
+              <select className={styles.select} value={distId}
+                onChange={e => { setDistId(e.target.value); setParams({}); setResultado(null); setMsg(null); }}>
+                {DISTRIBUCIONES.map(d => (
+                  <option key={d.id} value={d.id}>{d.nombre} — {d.metodo.split('(')[0].trim()}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/*Col 2 — Parámetros*/}
+        <div className={styles.card}>
+          <div className={styles.cardHead}>
+            <div className={`${styles.cardIcon} ${styles.iconBlue}`}>λ</div>
+            <span className={styles.cardTitle}>Parámetros</span>
+          </div>
+          <div className={styles.cardBody}>
+            <div className={styles.formulaBox}>
+              <span className={styles.formulaLabel}>FÓRMULA</span>
+              <span className={styles.formulaText}>{distDef?.formula}</span>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--slate-500)', marginBottom: 10 }}>
+              Método: {distDef?.metodo}
+            </div>
+            {distDef?.params.map(({ key, label, hint }) => (
+              <div key={key} className={styles.field}>
+                <label className={styles.fieldLabel}>
+                  {label}
+                  {hint && <span className={styles.fieldHint}>{hint}</span>}
+                </label>
+                <input type="number" className={styles.input}
+                  value={params[key] ?? ''}
+                  onChange={e => setParam(key, e.target.value === '' ? '' : Number(e.target.value))}
+                  step="any" />
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/*Col 3 — Restricciones*/}
+        <div className={styles.card}>
+          <div className={styles.cardHead}>
+            <div className={`${styles.cardIcon} ${styles.iconRose}`}>!</div>
+            <span className={styles.cardTitle}>Restricciones y detalles</span>
+          </div>
+          <div className={styles.cardBody}>
+            <ul className={styles.restrList}>
+              {distDef?.restricciones.map((r, i) => <li key={i}>{r}</li>)}
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      {/*Botones*/}
+      <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
+        <button className={`${styles.btn} ${styles.btnAmber}`}
+          style={{ flex: 2 }} onClick={handleGenerar}>
+          ▶ Transformar U_i → {distDef?.nombre}
+        </button>
+        <button className={`${styles.btn} ${styles.btnTeal}`}
+          onClick={handleExportar} disabled={!resultado} title="Exportar XLSX">
+          ⬇ XLSX
+        </button>
+        <button className={`${styles.btn} ${styles.btnRose}`}
+          onClick={() => { setResultado(null); setMsg(null); }}
+          title="Limpiar">✕
+        </button>
+      </div>
+
+      {/*Mensaje*/}
+      {msg && (
+        <div className={`${styles.msg} ${styles[msg.tipo]}`}
+          style={{ marginTop: 12, whiteSpace: 'pre-line' }}>
+          {msg.texto}
+        </div>
+      )}
+
+      {/*Resultados*/}
+      {resultado && resultado.stats && (
+        <div style={{ marginTop: 18 }}>
+          {/*Tabla*/}
+          <div className={styles.card}>
+            <div className={styles.cardHead}>
+              <div className={styles.cardHeadLeft}>
+                <div className={`${styles.cardIcon} ${styles.iconTeal}`}>#</div>
+                <span className={styles.cardTitle}>
+                  {distDef?.nombre} — {resultado.valores.length.toLocaleString()} valores
+                </span>
+              </div>
+              <button className={`${styles.btn} ${styles.btnGhost} ${styles.btnSm}`}
+                onClick={() => setVerTabla(v => !v)}>
+                {verTabla ? '▲ Ocultar tabla' : '▼ Ver tabla'}
+              </button>
+            </div>
+              {verTabla && (
+                <div className={styles.tableWrap}>
+                  <div className={styles.tableScroll}>
+                    <table className={styles.table}>
+                      <thead>
+                        <tr>
+                          <th>i</th>
+                          {distId === 'binomial' || distId === 'erlang' ? (
+                            <>
+                              <th>U_i usados (n = {params.n || '?'})</th>
+                              <th>X_i ({distDef?.nombre})</th>
+                            </>
+                          ) : distId === 'normal' ? (
+                            <>
+                              <th>U₁</th>
+                              <th>U₂</th>
+                              <th>Z₁ = √(−2·ln U₁)·cos(2π·U₂)</th>
+                              <th>X₁ = μ + σ·Z₁</th>
+                              <th>Z₂ = √(−2·ln U₁)·sin(2π·U₂)</th>
+                              <th>X₂ = μ + σ·Z₂</th>
+                            </>
+                          ) : (
+                            <>
+                              <th>X_i ({distDef?.nombre})</th>
+                              <th>U_i usado</th>
+                            </>
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {distId === 'normal' ? (
+                          //Visualización especial para Normal: mostrar pares (U1,U2) y los dos valores Z y X generados
+                          (() => {
+                            const filas = [];
+                            //Para Normal, cada 2 U_i generan 2 valores Z y 2 valores X
+                            for (let i = 0; i + 1 < uiActivos.length && filas.length < MAX_TABLA; i += 2) {
+                              const u1 = uiActivos[i];
+                              const u2 = uiActivos[i + 1];
+                              const R1 = u1 === 0 ? 1e-10 : u1;
+                              const R2 = u2;
+                              const Z1 = Math.sqrt(-2 * Math.log(R1)) * Math.cos(2 * Math.PI * R2);
+                              const Z2 = Math.sqrt(-2 * Math.log(R1)) * Math.sin(2 * Math.PI * R2);
+                              const X1 = (params.mu || 0) + (params.sigma || 1) * Z1;
+                              const X2 = (params.mu || 0) + (params.sigma || 1) * Z2;
+                              filas.push(
+                                <tr key={i}>
+                                  <td className={styles.tdIdx}>{Math.floor(i / 2) + 1}</td>
+                                  <td className={styles.tdNorm}>{u1.toFixed(6)}</td>
+                                  <td className={styles.tdNorm}>{u2.toFixed(6)}</td>
+                                  <td className={styles.tdNorm}>{Z1.toFixed(6)}</td>
+                                  <td className={styles.tdNorm}>{X1.toFixed(6)}</td>
+                                  <td className={styles.tdNorm}>{Z2.toFixed(6)}</td>
+                                  <td className={styles.tdNorm}>{X2.toFixed(6)}</td>
+                                </tr>
+                              );
+                            }
+                            return filas;
+                          })()
+                        ) : (distId === 'binomial' || distId === 'erlang') ? (
+                          //Visualización especial para Binomial y Erlang
+                          (() => {
+                            const nInt = Math.max(1, Math.floor(params.n || 1));
+                            const filas = [];
+                            for (let idx = 0; idx < resultado.valores.length && idx < MAX_TABLA; idx++) {
+                              const inicio = idx * nInt;
+                              const uiGrupo = uiActivos.slice(inicio, inicio + nInt);
+                              filas.push(
+                                <tr key={idx}>
+                                  <td className={styles.tdIdx}>{idx + 1}</td>
+                                  <td className={styles.tdNorm}>
+                                    {uiGrupo.map((u, j) => (
+                                      <span key={j} style={{ display: 'inline-block', marginRight: '6px' }}>
+                                        {u !== undefined ? u.toFixed(6) : '—'}
+                                      </span>
+                                    ))}
+                                  </td>
+                                  <td className={styles.tdInt}>
+                                    {distId === 'binomial' 
+                                      ? resultado.valores[idx].toFixed(0)
+                                      : resultado.valores[idx].toFixed(6)
+                                    }
+                                  </td>
+                                </tr>
+                              );
+                            }
+                            return filas;
+                          })()
+                        ) : (
+                          //Visualización normal para otras distribuciones
+                          resultado.valores.slice(0, MAX_TABLA).map((v, i) => (
+                            <tr key={i}>
+                              <td className={styles.tdIdx}>{i + 1}</td>
+                              <td className={styles.tdInt}>{v.toFixed(6)}</td>
+                              <td className={styles.tdNorm}>
+                                {uiActivos[i] !== undefined ? uiActivos[i].toFixed(6) : '—'}
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+          </div>
+
+          {/*Panel de fórmulas Excel*/}
+          {distDef?.excelFormulas && (
+            <div className={styles.card} style={{ marginTop: 14 }}>
+              <div className={styles.cardHead}>
+                <div className={`${styles.cardIcon} ${styles.iconBlue}`}>XL</div>
+                <span className={styles.cardTitle}>
+                  Verificación en Excel — {distDef.nombre}
+                </span>
+                <span style={{ fontSize: 11, color: 'var(--slate-500)', marginLeft: 8 }}>
+                  formulas recomendadas para comprobar los valores generados, igual que lo harías en simulación manual
+                </span>
+              </div>
+              <div className={styles.cardBody}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
+                  {distDef.excelFormulas.map((ef, idx) => (
+                    <div key={idx} style={{
+                      background: 'var(--slate-50, #f8fafc)',
+                      border: '1px solid var(--slate-200, #e2e8f0)',
+                      borderRadius: 8,
+                      padding: '10px 12px',
+                    }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--slate-600)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                        {ef.titulo}
+                      </div>
+                      <div style={{
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                        background: 'var(--slate-100, #f1f5f9)',
+                        borderRadius: 4,
+                        padding: '4px 8px',
+                        color: 'var(--emerald-700, #047857)',
+                        marginBottom: 4,
+                        wordBreak: 'break-all',
+                      }}>
+                        {ef.formula}
+                      </div>
+                      <div style={{
+                        fontFamily: 'monospace',
+                        fontSize: 11,
+                        color: 'var(--blue-600, #2563eb)',
+                        marginBottom: 4,
+                        wordBreak: 'break-all',
+                      }}>
+                        Ej: {ef.ejemplo}
+                      </div>
+                      <div style={{ fontSize: 11, color: 'var(--slate-500)', fontStyle: 'italic' }}>
+                        {ef.nota}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ═══════════════════════════════════════════════════════════════
+//  Componente AnalisisVariables
+//  Análisis de simulación: funciones tipo Excel sobre variables generadas
+//  Orientado a resolver preguntas de problemas de simulación digital
+// ═══════════════════════════════════════════════════════════════
+function AnalisisVariables({ resultadoGenerador, resultadoVariables }) {
+  //Estado de las distintas herramientas
+  const [tabActiva, setTabActiva] = useState('contarsi');   // 'contarsi'|'grupos'|'frecuencia'|'resumen'
+
+  //CONTAR.SI — pregunta libre
+  const [condCS, setCondCS]       = useState('');
+  const [valorCS, setValorCS]     = useState('');
+  const [resCS, setResCS]         = useState(null);
+
+  //GRUPOS — análisis por grupos de n (ej: 5 lámparas)
+  const [tamGrupo, setTamGrupo]   = useState(5);
+  const [condGrupo, setCondGrupo] = useState('');
+  const [valorGrupo, setValorGrupo] = useState('');
+  const [resGrupo, setResGrupo]   = useState(null);
+
+  //TABLA DE FRECUENCIAS — intervalos automáticos o Poisson
+  // eslint-disable-next-line no-unused-vars
+  const [numInterv, setNumInterv] = useState(5);
+  // eslint-disable-next-line no-unused-vars
+  const [resFrecuencia, setResFrecuencia] = useState(null);
+
+  //Datos fuente: Variables Aleatorias > U_i del generador ──
+  const datos = useMemo(() => {
+  return resultadoVariables?.valores || resultadoGenerador?.normalizados || [];
+  }, [resultadoVariables?.valores, resultadoGenerador?.normalizados]);
+  const distId = resultadoVariables?.distId || null;
+  const distDef = DISTRIBUCIONES.find(d => d.id === distId);
+  const nombreVar = distDef?.nombre || (resultadoVariables ? 'X_i' : 'U_i');
+  const n = datos.length;
+
+  //Estadísticas básicas siempre visibles
+  const statsBase = useMemo(() => {
+    if (n === 0) return null;
+    const sorted = [...datos].sort((a, b) => a - b);
+    const media  = datos.reduce((s, x) => s + x, 0) / n;
+    const varianza = datos.reduce((s, x) => s + (x - media) ** 2, 0) / n;
+    //Moda aproximada (valor más repetido, redondeado a 4 dec)
+    const freq = {};
+    datos.forEach(v => { const k = v.toFixed(4); freq[k] = (freq[k] || 0) + 1; });
+    const modaEntry = Object.entries(freq).sort((a, b) => b[1] - a[1])[0];
+    const repetidas = Object.values(freq).filter(c => c > 1).length;
+    return {
+      n, media, mediana: n % 2 === 0
+        ? (sorted[n/2-1] + sorted[n/2]) / 2
+        : sorted[Math.floor(n/2)],
+      min: sorted[0], max: sorted[n-1],
+      varianza, desv: Math.sqrt(varianza),
+      moda: modaEntry ? parseFloat(modaEntry[0]) : null,
+      modaFrec: modaEntry ? modaEntry[1] : 0,
+      repetidas,
+    };
+  }, [datos, n]);
+
+  const buildPredicate = (op, val) => {
+    const v = parseFloat(val);
+    if (isNaN(v)) return null;
+    switch (op) {
+      case '<':  return x => x < v;
+      case '<=': return x => x <= v;
+      case '>':  return x => x > v;
+      case '>=': return x => x >= v;
+      case '=':
+      case '==': return x => Math.abs(x - v) < 1e-9;
+      case '!=': return x => Math.abs(x - v) >= 1e-9;
+      default:   return null;
+    }
+  };
+
+  //CONTAR.SI global
+  const handleContarSI = useCallback(() => {
+    if (n === 0) { setResCS({ error: 'No hay datos disponibles.' }); return; }
+    const pred = buildPredicate(condCS, valorCS);
+    if (!pred) { setResCS({ error: 'Ingresa un operador (< <= > >= = !=) y un valor numérico.' }); return; }
+    const cumplen = datos.filter(pred);
+    const proporcion = cumplen.length / n;
+    setResCS({
+      cumplen: cumplen.length,
+      noCumplen: n - cumplen.length,
+      proporcion,
+      condicion: `${condCS} ${valorCS}`,
+      menores: cumplen,
+    });
+  }, [datos, n, condCS, valorCS]);
+
+  //Análisis por grupos de n (ej: lotes de 5 lámparas)
+  const handleGrupos = useCallback(() => {
+    if (n === 0) { setResGrupo({ error: 'No hay datos disponibles.' }); return; }
+    const tam = Math.max(1, Math.floor(tamGrupo));
+    const pred = buildPredicate(condGrupo, valorGrupo);
+    if (!pred) { setResGrupo({ error: 'Ingresa un operador y valor para la condición.' }); return; }
+
+    const grupos = [];
+    for (let i = 0; i + tam <= n; i += tam) {
+      const slice = datos.slice(i, i + tam);
+      const c = slice.filter(pred).length;
+      grupos.push({ idx: grupos.length + 1, valores: slice, cumplen: c, total: tam, proporcion: c / tam });
+    }
+    if (grupos.length === 0) {
+      setResGrupo({ error: `Se necesitan al menos ${tam} datos para formar 1 grupo.` }); return;
+    }
+    const totalCumplen = grupos.reduce((s, g) => s + g.cumplen, 0);
+    const totalElem    = grupos.reduce((s, g) => s + g.total, 0);
+    const promProp     = grupos.reduce((s, g) => s + g.proporcion, 0) / grupos.length;
+    setResGrupo({
+      grupos,
+      numGrupos: grupos.length, tamGrupo: tam,
+      totalCumplen, totalElem,
+      proporcionGlobal: totalCumplen / totalElem,
+      promedioProp: promProp,
+      condicion: `${condGrupo} ${valorGrupo}`,
+    });
+  }, [datos, n, tamGrupo, condGrupo, valorGrupo]);
+
+  //Tabla de frecuencias
+  // eslint-disable-next-line no-unused-vars
+  const handleFrecuencia = useCallback(() => {
+    if (n === 0) { setResFrecuencia({ error: 'No hay datos.' }); return; }
+    const esDiscreta = distId === 'poisson' || distId === 'binomial';
+
+    if (esDiscreta) {
+      //Tabla discreta por valor entero
+      const freq = {};
+      datos.forEach(v => { const k = Math.round(v); freq[k] = (freq[k] || 0) + 1; });
+      const keys = Object.keys(freq).map(Number).sort((a, b) => a - b);
+      let acum = 0;
+      const filas = keys.map(k => {
+        acum += freq[k];
+        return { label: `X = ${k}`, fi: freq[k], fri: freq[k] / n, Fri: acum / n };
+      });
+      setResFrecuencia({ tipo: 'discreta', filas, n });
+    } else {
+      //Tabla continua por intervalos
+      const k = Math.max(2, Math.min(20, Math.floor(numInterv)));
+      const min = statsBase.min, max = statsBase.max;
+      const ancho = (max - min) / k;
+      if (ancho === 0) { setResFrecuencia({ error: 'Todos los valores son iguales.' }); return; }
+      const filas = [];
+      let acum = 0;
+      for (let i = 0; i < k; i++) {
+        const lo = min + i * ancho;
+        const hi = lo + ancho;
+        const fi = datos.filter(x => i === k - 1 ? x >= lo && x <= hi : x >= lo && x < hi).length;
+        acum += fi;
+        filas.push({
+          label: `[${lo.toFixed(3)}, ${hi.toFixed(3)}${i === k-1 ? ']' : ')'}`,
+          fi, fri: fi / n, Fri: acum / n,
+        });
+      }
+      setResFrecuencia({ tipo: 'continua', filas, n, k, ancho });
+    }
+  }, [datos, n, distId, numInterv, statsBase]);
+
+  //Helpers de render
+  const TABS = [
+    { id: 'resumen',    label: 'Resumen',         title: 'Estadísticas y valores clave' },
+    { id: 'contarsi',  label: 'Contar.si',        title: 'Contar valores con cualquier condición' },
+    { id: 'grupos',    label: 'Por grupos',        title: 'Analizar grupos de n datos (ej: lotes, lámparas)' },
+    { id: 'frecuencia',label: 'Frecuencias',       title: 'Tabla de frecuencias absoluta y relativa' },
+  ];
+
+  const inputStyle = { display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' };
+  const selectSm = { padding: '4px 6px', borderRadius: 6, border: '1px solid var(--slate-300)', fontSize: 13, background: 'var(--slate-50)' };
+  const inputSm  = { padding: '4px 8px', borderRadius: 6, border: '1px solid var(--slate-300)', fontSize: 13, width: 100, background: 'var(--slate-50)' };
+
+  return (
+    <div className={styles.variablesModule} style={{ marginTop: 20 }}>
+      {/*Encabezado*/}
+      <div className={styles.pruebasHeader}>
+        <div className={`${styles.cardIcon} ${styles.iconBlue}`} style={{ fontSize: 18 }}>∑</div>
+        <div style={{ flex: 1 }}>
+          <div className={styles.cardTitle}>Análisis de simulación</div>
+          <div className={styles.pruebasSub}>
+            Funciones aplicadas sobre las variables generadas · Resuelve preguntas de probabilidad y simulación
+          </div>
+        </div>
+        {n > 0 && (
+          <span className={`${styles.badge} ${styles.badgeOk}`}>
+            {n.toLocaleString()} datos · {nombreVar}
+          </span>
+        )}
+      </div>
+
+      {n === 0 ? (
+        <div className={styles.emptyState} style={{ padding: 24 }}>
+          <p>⚠ Genera o importa variables aleatorias en el módulo de arriba para poder analizarlas aquí.</p>
+        </div>
+      ) : (
+        <>
+          {/*Tabs*/}
+          <div style={{ display: 'flex', gap: 6, marginTop: 14, flexWrap: 'wrap' }}>
+            {TABS.map(t => (
+              <button key={t.id} title={t.title}
+                onClick={() => setTabActiva(t.id)}
+                className={`${styles.btn} ${tabActiva === t.id ? styles.btnAmber : styles.btnGhost}`}
+                style={{ fontSize: 12, padding: '6px 12px' }}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/*TAB: RESUMEN*/}
+          {tabActiva === 'resumen' && statsBase && (
+            <div style={{ marginTop: 14 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
+                {[
+                  { label: 'Promedio (Media)',  val: statsBase.media.toFixed(6),   desc: 'Valor esperado muestral' },
+                  { label: 'Mediana',           val: statsBase.mediana.toFixed(6), desc: '50% de los datos' },
+                  { label: 'Mínimo (menor)',     val: statsBase.min.toFixed(6),     desc: 'Variable aleatoria más pequeña' },
+                  { label: 'Máximo (mayor)',     val: statsBase.max.toFixed(6),     desc: 'Variable aleatoria más grande' },
+                  { label: 'Desv. Estándar',    val: statsBase.desv.toFixed(6),    desc: 'Dispersión muestral' },
+                  { label: 'Varianza',          val: statsBase.varianza.toFixed(6),desc: 'Desv²' },
+                  { label: 'Valores distintos c/repetición', val: `${statsBase.repetidas}`, desc: 'Grupos con más de 1 ocurrencia' },
+                  { label: 'Moda aprox.',       val: statsBase.moda !== null ? `${statsBase.moda.toFixed(4)} (×${statsBase.modaFrec})` : '—', desc: 'Valor más frecuente (4 dec)' },
+                ].map(({ label, val, desc }) => (
+                  <div key={label} className={styles.statBox}>
+                    <div className={styles.statVal} style={{ fontSize: 14 }}>{val}</div>
+                    <div className={styles.statLabel}>{label}</div>
+                    <div style={{ fontSize: 10, color: 'var(--slate-400)', marginTop: 2 }}>{desc}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/*Preguntas de simulación básicas ya respondidas*/}
+              <div className={styles.card}>
+                <div className={styles.cardHead}>
+                  <div className={`${styles.cardIcon} ${styles.iconAmber}`}>?</div>
+                  <span className={styles.cardTitle}>Preguntas de simulación respondidas automáticamente</span>
+                </div>
+                <div className={styles.cardBody}>
+                  {[
+                    { q: `¿Cuál es la variable aleatoria promedio entre todas?`, a: `${statsBase.media.toFixed(6)}  (media de los ${n} valores generados)` },
+                    { q: `¿Cuál es la variable aleatoria más grande (máxima)?`,  a: `${statsBase.max.toFixed(6)}` },
+                    { q: `¿Cuál es la variable aleatoria más pequeña (mínima)?`, a: `${statsBase.min.toFixed(6)}` },
+                    { q: `¿Cuántas variables se repitieron (tienen igual valor redondeado a 4 dec)?`, a: `${statsBase.repetidas} grupos de valores con 2 o más repeticiones` },
+                  ].map(({ q, a }) => (
+                    <div key={q} style={{ display: 'flex', gap: 10, padding: '8px 0', borderBottom: '1px solid var(--slate-100)' }}>
+                      <span style={{ fontSize: 12, color: 'var(--slate-500)', minWidth: 16 }}>Q</span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 12, color: 'var(--slate-600)', marginBottom: 2 }}>{q}</div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--teal-600, #0d9488)' }}>→ {a}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/*TAB: CONTAR.SI*/}
+          {tabActiva === 'contarsi' && (
+            <div style={{ marginTop: 14 }}>
+              <div className={styles.card}>
+                <div className={styles.cardHead}>
+                  <div className={`${styles.cardIcon} ${styles.iconAmber}`}>=SI</div>
+                  <span className={styles.cardTitle}>CONTAR.SI — sobre todos los {n.toLocaleString()} valores</span>
+                </div>
+                <div className={styles.cardBody}>
+                  <p style={{ fontSize: 12, color: 'var(--slate-500)', marginBottom: 10 }}>
+                    Equivalente a <code>=CONTAR.SI(rango; "condición")</code> en Excel. Cuenta cuántas variables aleatorias cumplen la condición ingresada.
+                    Útil para responder preguntas como: <em>"¿cuántas lámparas duran más de X horas?"</em>, <em>"¿cuántas revisiones cuestan más de Y?"</em>, etc.
+                  </p>
+                  <div style={inputStyle}>
+                    <label style={{ fontSize: 12, color: 'var(--slate-600)' }}>Condición:</label>
+                    <select style={selectSm} value={condCS} onChange={e => setCondCS(e.target.value)}>
+                      <option value="">-- operador --</option>
+                      <option value="<">{'< (menor que)'}</option>
+                      <option value="<=">{'<= (menor o igual)'}</option>
+                      <option value=">">{'> (mayor que)'}</option>
+                      <option value=">=">{'>= (mayor o igual)'}</option>
+                      <option value="=">{'= (igual a)'}</option>
+                      <option value="!=">{'!= (diferente de)'}</option>
+                    </select>
+                    <input style={inputSm} type="number" placeholder="valor" step="any"
+                      value={valorCS} onChange={e => setValorCS(e.target.value)} />
+                    <button className={`${styles.btn} ${styles.btnAmber}`}
+                      style={{ fontSize: 12, padding: '5px 14px' }} onClick={handleContarSI}>
+                      ▶ Aplicar
+                    </button>
+                  </div>
+
+                  {resCS?.error && (
+                    <div className={`${styles.msg} ${styles.error}`} style={{ marginTop: 10 }}>{resCS.error}</div>
+                  )}
+                  {resCS && !resCS.error && (
+                    <div style={{ marginTop: 14 }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 14 }}>
+                        {[
+                          { label: `Cumplen "${resCS.condicion}"`, val: resCS.cumplen.toLocaleString(), hi: true },
+                          { label: 'No cumplen',                   val: resCS.noCumplen.toLocaleString() },
+                          { label: 'Total de variables',           val: n.toLocaleString() },
+                          { label: 'Proporción / Probabilidad',    val: `${(resCS.proporcion * 100).toFixed(2)}%`, hi: true },
+                        ].map(({ label, val, hi }) => (
+                          <div key={label} className={styles.statBox} style={hi ? { background: 'var(--teal-50, #f0fdfa)', border: '1px solid var(--teal-200, #99f6e4)' } : {}}>
+                            <div className={styles.statVal} style={{ fontSize: 16 }}>{val}</div>
+                            <div className={styles.statLabel}>{label}</div>
+                          </div>
+                        ))}
+                      </div>
+                      <div className={styles.infoBox}>
+                        <strong>Respuesta:</strong>{' '}
+                        De los <strong>{n}</strong> valores de <em>{nombreVar}</em>,{' '}
+                        <strong>{resCS.cumplen}</strong> cumplen la condición <code>{resCS.condicion}</code>,{' '}
+                        lo que representa el <strong>{(resCS.proporcion * 100).toFixed(2)}%</strong>.
+                        {resCS.cumplen > 0 && (
+                          <> La probabilidad estimada por simulación es <strong>P(X {resCS.condicion}) ≈ {resCS.proporcion.toFixed(4)}</strong>.</>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/*Segunda condición complementaria*/}
+              {resCS && !resCS.error && (
+                <div className={styles.card} style={{ marginTop: 12 }}>
+                  <div className={styles.cardHead}>
+                    <div className={`${styles.cardIcon} ${styles.iconBlue}`}>÷</div>
+                    <span className={styles.cardTitle}>Dividir resultado — responder "¿cuántos de N...?"</span>
+                  </div>
+                  <div className={styles.cardBody}>
+                    <p style={{ fontSize: 12, color: 'var(--slate-500)', marginBottom: 8 }}>
+                      Útil para preguntas tipo: <em>"Se seleccionan 5 lámparas, ¿cuántas se espera que duren X horas?"</em>
+                      <em> Multiplica la proporción por el tamaño del lote. </em>
+                    </p>
+                    <div style={inputStyle}>
+                      <label style={{ fontSize: 12 }}>Total del lote / grupo:</label>
+                      <LoteCalculadora proporcion={resCS.proporcion} condicion={resCS.condicion} />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+            {/*TAB: POR GRUPOS*/}
+            {tabActiva === 'grupos' && (
+              <div style={{ marginTop: 14 }}>
+                <div className={styles.card}>
+                  <div className={styles.cardHead}>
+                    <div className={`${styles.cardIcon} ${styles.iconBlue}`}>n</div>
+                    <span className={styles.cardTitle}>Análisis por grupos de n datos</span>
+                  </div>
+                  <div className={styles.cardBody}>
+                    
+                    {/* Verificar si la distribución es permitida */}
+                    {distId === 'poisson' || distId === 'exponencial' || distId === 'uniforme' ? (
+                      <>
+                        <p style={{ fontSize: 12, color: 'var(--slate-500)', marginBottom: 10 }}>
+                          Agrupa los datos en bloques de tamaño fijo y aplica CONTAR.SI a cada grupo.
+                          Ideal para: <em>"De cada grupo de 5 lámparas, ¿cuántas duran más de 30 h?"</em> o <em>"De cada lote de 10, ¿cuántos son defectuosos?"</em>
+                        </p>
+                        <div style={{ ...inputStyle, marginBottom: 10 }}>
+                          <label style={{ fontSize: 12 }}>Tamaño del grupo (n):</label>
+                          <input style={{ ...inputSm, width: 70 }} type="number" min={1}
+                            value={tamGrupo} onChange={e => setTamGrupo(Math.max(1, Number(e.target.value)))} />
+                          <label style={{ fontSize: 12 }}>Condición:</label>
+                          <select style={selectSm} value={condGrupo} onChange={e => setCondGrupo(e.target.value)}>
+                            <option value="">-- operador --</option>
+                            <option value="<">{'< menor que'}</option>
+                            <option value="<=">{'<= menor o igual'}</option>
+                            <option value=">">{'> mayor que'}</option>
+                            <option value=">=">{'>= mayor o igual'}</option>
+                            <option value="=">{'= igual a'}</option>
+                            <option value="!=">{'!= diferente de'}</option>
+                          </select>
+                          <input style={inputSm} type="number" placeholder="valor" step="any"
+                            value={valorGrupo} onChange={e => setValorGrupo(e.target.value)} />
+                          <button className={`${styles.btn} ${styles.btnTeal}`}
+                            style={{ fontSize: 12, padding: '5px 14px' }} onClick={handleGrupos}>
+                            ▶ Analizar
+                          </button>
+                        </div>
+
+                        {resGrupo?.error && (
+                          <div className={`${styles.msg} ${styles.error}`}>{resGrupo.error}</div>
+                        )}
+                        {resGrupo && !resGrupo.error && (
+                          <>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, margin: '12px 0' }}>
+                              {[
+                                { label: 'Grupos formados',          val: resGrupo.numGrupos },
+                                { label: 'Cumplen (total)',          val: resGrupo.totalCumplen },
+                                { label: 'Proporción global',        val: `${(resGrupo.proporcionGlobal * 100).toFixed(2)}%` },
+                                { label: 'Promedio por grupo',       val: `${(resGrupo.promedioProp * resGrupo.tamGrupo).toFixed(2)} de ${resGrupo.tamGrupo}` },
+                              ].map(({ label, val }) => (
+                                <div key={label} className={styles.statBox}>
+                                  <div className={styles.statVal}>{val}</div>
+                                  <div className={styles.statLabel}>{label}</div>
+                                </div>
+                              ))}
+                            </div>
+                            <div className={styles.infoBox} style={{ marginBottom: 12 }}>
+                              <strong>Respuesta:</strong>{' '}
+                              En promedio, <strong>{(resGrupo.promedioProp * resGrupo.tamGrupo).toFixed(2)}</strong> de cada{' '}
+                              <strong>{resGrupo.tamGrupo}</strong> valores cumplen <code>{resGrupo.condicion}</code>{' '}
+                              ({(resGrupo.promedioProp * 100).toFixed(1)}% por grupo).
+                              El número esperado en un grupo de <strong>{resGrupo.tamGrupo}</strong> es{' '}
+                              <strong>{(resGrupo.promedioProp * resGrupo.tamGrupo).toFixed(2)}</strong>.
+                            </div>
+                            {resGrupo.grupos.length <= 50 && (
+                              <details>
+                                <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--slate-500)', padding: '4px 0' }}>
+                                  Ver detalle por grupo ({resGrupo.grupos.length} grupos)
+                                </summary>
+                                <div className={styles.tableWrap} style={{ marginTop: 8 }}>
+                                  <div className={styles.tableScroll}>
+                                    <table className={styles.table}>
+                                      <thead>
+                                        <tr><th>Grupo</th><th>Valores (resumidos)</th><th>Cumplen</th><th>%</th></tr>
+                                      </thead>
+                                      <tbody>
+                                        {resGrupo.grupos.map(g => (
+                                          <tr key={g.idx}>
+                                            <td className={styles.tdIdx}>{g.idx}</td>
+                                            <td className={styles.tdInt} style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                              {g.valores.map(v => v.toFixed(3)).join(', ')}
+                                            </td>
+                                            <td className={styles.tdC}>{g.cumplen}/{g.total}</td>
+                                            <td className={styles.tdNorm}>{(g.proporcion * 100).toFixed(1)}%</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              </details>
+                            )}
+                          </>
+                        )}
+                      </>
+                    ) : (
+                      <div className={styles.emptyState} style={{ padding: 24 }}>
+                        <p>⚠ El análisis por grupos solo está disponible para las distribuciones:</p>
+                        <p style={{ fontSize: 12, marginTop: 8 }}>
+                          <strong>Poisson</strong> (discreta), <strong>Exponencial</strong> y <strong>Uniforme</strong>.
+                        </p>
+                        <p style={{ fontSize: 12, marginTop: 8 }}>
+                          Para <strong>Normal, Binomial y Erlang</strong> esta opción está deshabilitada.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+            {/*TAB: FRECUENCIAS*/}
+            {tabActiva === 'frecuencia' && (
+              <div style={{ marginTop: 14 }}>
+                <div className={styles.card}>
+                  <div className={styles.cardHead}>
+                    <div className={`${styles.cardIcon} ${styles.iconTeal}`}>fi</div>
+                    <span className={styles.cardTitle}>
+                      Tabla de frecuencias — {distId === 'poisson' ? 'Poisson (probabilidad y acumulada teórica)' : 'Disponible solo para distribución Poisson'}
+                    </span>
+                  </div>
+                  <div className={styles.cardBody}>
+                    
+                    {/*Solo para Poisson: mostrar tabla teórica*/}
+                    {distId === 'poisson' ? (
+                      (() => {
+                        const lambda = resultadoVariables?.params?.lambda || 1;
+                        const filas = [];
+                        let x = 0;
+                        let acum = 0;
+                        const maxFilas = 50;
+                        while (acum < 0.9999 && x < maxFilas) {
+                          //Calcular factorial de x
+                          let fact = 1;
+                          for (let i = 2; i <= x; i++) fact *= i;
+                          const prob = Math.exp(-lambda) * Math.pow(lambda, x) / fact;
+                          acum += prob;
+                          filas.push({ x, prob: prob.toFixed(6), acum: acum.toFixed(6) });
+                          x++;
+                        }
+                        return (
+                          <div className={styles.tableWrap}>
+                            <div className={styles.tableScroll}>
+                              <table className={styles.table}>
+                                <thead>
+                                  <tr>
+                                    <th>x (valor observado)</th>
+                                    <th>Distribución de probabilidad P(X=x)</th>
+                                    <th>Distribución acumulada F(x) = P(X≤x)</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {filas.map((f, i) => (
+                                    <tr key={i}>
+                                      <td className={styles.tdIdx}>{f.x}</td>
+                                      <td className={styles.tdNorm}>{f.prob}</td>
+                                      <td className={styles.tdNorm}>{f.acum}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                              <div style={{ fontSize: 11, color: 'var(--slate-400)', marginTop: 8 }}>
+                                λ = {lambda.toFixed(4)} · Última F(x) = {filas[filas.length-1]?.acum || '—'} (≈ 1)
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()
+                    ) : (
+                      <div className={styles.emptyState} style={{ padding: 24 }}>
+                        <p>⚠ La tabla de frecuencias solo está disponible para la distribución <strong>Poisson</strong> en esta sección.</p>
+                        <p style={{ fontSize: 12, marginTop: 8 }}>Selecciona Poisson en el módulo de Variables aleatorias para ver la tabla teórica.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+        </>
+      )}
+    </div>
+  );
+}
+
+//Sub-componente: calculadora de lote (número esperado en N elementos)
+function LoteCalculadora({ proporcion, condicion }) {
+  const [lote, setLote] = useState(5);
+  const esperado = (proporcion * lote).toFixed(4);
+  return (
+    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 6 }}>
+      <input type="number" min={1} value={lote}
+        onChange={e => setLote(Math.max(1, Number(e.target.value)))}
+        style={{ padding: '4px 8px', borderRadius: 6, border: '1px solid var(--slate-300)', fontSize: 13, width: 80, background: 'var(--slate-50)' }} />
+      <span style={{ fontSize: 13 }}>→</span>
+      <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--teal-600, #0d9488)' }}>
+        Número esperado que cumplen <code>{condicion}</code>: <strong>{esperado}</strong>
+      </span>
+      <span style={{ fontSize: 11, color: 'var(--slate-400)' }}>= {lote} × {proporcion.toFixed(4)}</span>
+    </div>
+  );
+}
+
+
 // ─────────────────────────────────────────────────────────────
-//  COMPONENTE ModuloPruebas
+//  Componente ModuloPruebas 
 // ─────────────────────────────────────────────────────────────
 
 //Definición de las pruebas disponibles
@@ -715,7 +1678,7 @@ const handleArchivoXLSX = (e) => {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  COMPONENTE PRINCIPAL App
+//  Componente principal App
 // ─────────────────────────────────────────────────────────────
 export default function App() {
   const [metodoId, setMetodoId]    = useState('mixto');
@@ -724,6 +1687,7 @@ export default function App() {
   const [modoAuto, setModoAuto]    = useState(true);
   const [resultado, setResultado]  = useState(null);
   const [msgValidacion, setMsgVal] = useState(null);
+  const [resultadoVariables, setResultadoVariables] = useState(null);
 
   const { valores, set: setParam, cargarAuto, reset: resetParams } = useParamsForm(metodoId);
 
@@ -1305,7 +2269,18 @@ return (
           </div>
         )}
 
-        {/*FILA 6: MÓDULO DE PRUEBAS ESTADÍSTICAS*/}
+        {/*FILA 6: MÓDULO DE VARIABLES ALEATORIAS NO-UNIFORMES*/}
+        <ModuloVariables 
+        resultadoGenerador={resultado}
+        onVariablesGeneradas={setResultadoVariables} />
+
+        {/*FILA 7: ANÁLISIS DE SIMULACIÓN*/}
+        <AnalisisVariables 
+         resultadoGenerador={resultado} 
+         resultadoVariables={resultadoVariables} 
+        />
+
+        {/*FILA 8: MÓDULO DE PRUEBAS ESTADÍSTICAS*/}
         <ModuloPruebas resultadoGenerador={resultado} />
       </div>
     </div>
